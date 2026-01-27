@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { RFMRecord, SegmentSummary } from '../types';
 import { SEGMENT_COLORS, SEGMENT_DESCRIPTIONS } from '../constants';
-import { Users, DollarSign, Grid3X3, ArrowUpRight, ShoppingBag, Target, Search, Filter, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
+import { Users, DollarSign, Grid3X3, ArrowUpRight, ShoppingBag, Target, Search, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DashboardProps {
   records: RFMRecord[];
@@ -98,17 +98,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
 
   return (
     <div className="space-y-8 pb-20">
-      {/* Aviso de Motor Local */}
-      <div className="flex items-center space-x-3 bg-emerald-500/5 border border-emerald-500/10 px-6 py-3 rounded-2xl">
-        <div className="p-2 bg-emerald-500/20 rounded-lg">
-          <Zap className="w-4 h-4 text-emerald-400" />
-        </div>
-        <div>
-          <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Motor Matemático Ativado</p>
-          <p className="text-xs text-slate-500 font-medium italic">Todos os cálculos RFM foram processados localmente via quintis populacionais para garantir precisão absoluta.</p>
-        </div>
-      </div>
-
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 

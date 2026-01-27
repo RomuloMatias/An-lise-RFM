@@ -7,13 +7,13 @@ const parseCurrency = (val: any): number => {
   if (!str) return 0;
 
   if (str.includes(',')) {
+    // Formato Brasileiro: 1.000,00 -> 1000.00
+    // Se tiver virgula, assume que é decimal
     str = str.replace(/\./g, '').replace(',', '.');
   } else {
+    // Se não tem virgula, verifica pontos
     const dotCount = (str.match(/\./g) || []).length;
-    const commaCount = (str.match(/,/g) || []).length;
     if (dotCount > 1) str = str.replace(/\./g, '');
-    else if (commaCount > 1) str = str.replace(/,/g, '');
-    else if (commaCount === 1 && dotCount === 1) str = str.replace(/,/g, '');
   }
 
   const cleaned = str.replace(/[^\d.-]/g, '');
@@ -21,99 +21,124 @@ const parseCurrency = (val: any): number => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
+const parseDate = (val: any): Date => {
+  if (!val) return new Date('Invalid');
+  
+  // Tenta criar data direta (ISO ou padrão US)
+  let date = new Date(val);
+  if (!isNaN(date.getTime())) return date;
+
+  const str = String(val).trim();
+  
+  // Tenta formato BR (DD/MM/YYYY) ou com hora
+  // Regex simples para capturar dia, mes, ano
+  const match = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (match) {
+    const d = parseInt(match[1]);
+    const m = parseInt(match[2]) - 1;
+    let y = parseInt(match[3]);
+    if (y < 100) y += 2000; // Ajuste ano curto
+    const newDate = new Date(y, m, d);
+    if (!isNaN(newDate.getTime())) return newDate;
+  }
+
+  return new Date('Invalid');
+};
+
 export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[] => {
   const customerData: Record<string, { name: string, dates: Date[], values: number[] }> = {};
 
-  // 1. Agrupamento e Parsing Inicial
-  data.forEach(row => {
-    const cid = String(row[mapping.customerId]);
-    const cName = mapping.customerName ? String(row[mapping.customerName]) : 'N/A';
-    const dateStr = String(row[mapping.orderDate]);
-    const val = parseCurrency(row[mapping.orderValue]);
+  // 1. Agrupamento Eficiente
+  // Iteração única O(N) para consolidar transações em clientes
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const cid = row[mapping.customerId];
+    
+    // Ignora linhas sem ID
+    if (!cid || String(cid).trim() === '') continue;
 
-    let date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
-      const parts = dateStr.split(/[\/\-]/);
-      if (parts.length === 3) {
-        // Tenta DD/MM/YYYY
-        const d = parseInt(parts[0]);
-        const m = parseInt(parts[1]) - 1;
-        const y = parseInt(parts[2]);
-        date = new Date(y, m, d);
-      }
-    }
+    const cidStr = String(cid).trim();
+    const cName = mapping.customerName && row[mapping.customerName] ? String(row[mapping.customerName]) : 'Cliente ' + cidStr;
+    const dateVal = row[mapping.orderDate];
+    const val = parseCurrency(row[mapping.orderValue]);
+    const date = parseDate(dateVal);
 
     if (!isNaN(date.getTime())) {
-      if (!customerData[cid]) {
-        customerData[cid] = { name: cName, dates: [], values: [] };
+      if (!customerData[cidStr]) {
+        customerData[cidStr] = { name: cName, dates: [], values: [] };
       }
-      customerData[cid].dates.push(date);
-      customerData[cid].values.push(val);
+      customerData[cidStr].dates.push(date);
+      customerData[cidStr].values.push(val);
+    }
+  }
+
+  // 2. Encontrar a Data de Referência (O(C * T) onde C=clientes, T=transações médias)
+  let maxDate = new Date(0);
+  const customers = Object.keys(customerData);
+  
+  if (customers.length === 0) return [];
+
+  customers.forEach(cid => {
+    const dates = customerData[cid].dates;
+    for (let d of dates) {
+      if (d > maxDate) maxDate = d;
     }
   });
 
-  // 2. Encontrar a Data de Referência (A venda mais recente do arquivo)
-  let maxDate = new Date(0);
-  Object.values(customerData).forEach(c => {
-    c.dates.forEach(d => {
-      if (d > maxDate) maxDate = d;
-    });
-  });
+  const records: any[] = [];
 
-  const records: Omit<RFMRecord, 'rScore' | 'fScore' | 'mScore' | 'rfmScore' | 'segment'>[] = [];
-
-  // 3. Cálculo de R, F, M brutos
-  Object.keys(customerData).forEach(cid => {
-    const dates = customerData[cid].dates.sort((a, b) => b.getTime() - a.getTime());
-    const latestDate = dates[0];
-    // Recência em dias em relação ao último pedido do dataset
+  // 3. Cálculo de R, F, M absolutos (O(C))
+  customers.forEach(cid => {
+    const data = customerData[cid];
+    // Ordena datas apenas do cliente (rápido)
+    data.dates.sort((a, b) => b.getTime() - a.getTime());
+    
+    const latestDate = data.dates[0];
     const recency = Math.max(0, Math.floor((maxDate.getTime() - latestDate.getTime()) / (1000 * 60 * 60 * 24)));
-    const frequency = dates.length;
-    const monetary = customerData[cid].values.reduce((a, b) => a + b, 0);
+    const frequency = data.dates.length;
+    const monetary = data.values.reduce((a, b) => a + b, 0);
 
     records.push({ 
       customerId: cid, 
-      customerName: customerData[cid].name,
+      customerName: data.name,
       recency, 
       frequency, 
-      monetary 
+      monetary,
+      rScore: 0,
+      fScore: 0,
+      mScore: 0
     });
   });
 
-  // 4. Atribuição de Scores (1-5) via Quintis Populacionais
-  // Função que atribui 1-5 baseado na posição do registro na lista ordenada
-  const assignScores = (items: any[], key: keyof typeof items[0], inverse = false) => {
-    const sorted = [...items].sort((a, b) => (a[key] as number) - (b[key] as number));
+  // 4. Atribuição de Scores Otimizada (O(C log C))
+  // Em vez de find() dentro de loop (O(N^2)), modificamos as referências do array ordenado diretamente
+  
+  const assignScores = (key: 'recency' | 'frequency' | 'monetary', inverse = false) => {
+    // Cria uma cópia superficial e ordena. Como são objetos, as referências se mantêm.
+    // Modificar o item dentro do sorted modifica o item no array 'records' original.
+    const sorted = [...records].sort((a, b) => (a[key] as number) - (b[key] as number));
     const n = sorted.length;
     
-    sorted.forEach((item, index) => {
-      // Calcula o quintil (1 a 5)
-      let score = Math.floor((index / n) * 5) + 1;
-      // Para recência, quanto menor o valor (dias desde a última compra), maior o score
+    for (let i = 0; i < n; i++) {
+      let score = Math.floor((i / n) * 5) + 1;
       if (inverse) score = 6 - score;
       
-      const record = items.find(r => r.customerId === item.customerId);
-      if (record) {
-        if (key === 'recency') (record as any).rScore = score;
-        if (key === 'frequency') (record as any).fScore = score;
-        if (key === 'monetary') (record as any).mScore = score;
-      }
-    });
+      // Atribuição direta por referência - ULTRA RÁPIDO
+      if (key === 'recency') sorted[i].rScore = score;
+      if (key === 'frequency') sorted[i].fScore = score;
+      if (key === 'monetary') sorted[i].mScore = score;
+    }
   };
 
-  assignScores(records, 'recency', true); // Inverso: menos dias = nota 5
-  assignScores(records, 'frequency', false); // Direto: mais frequencia = nota 5
-  assignScores(records, 'monetary', false); // Direto: mais dinheiro = nota 5
+  assignScores('recency', true);
+  assignScores('frequency', false);
+  assignScores('monetary', false);
 
-  // 5. Finalização com Segmentos
+  // 5. Finalização
   return records.map(r => {
-    const rScore = (r as any).rScore;
-    const fScore = (r as any).fScore;
-    const mScore = (r as any).mScore;
-    const rfmScore = `${rScore}${fScore}${mScore}`;
-    const segment = assignSegment(rScore, fScore);
-
-    return { ...r, rScore, fScore, mScore, rfmScore, segment } as RFMRecord;
+    const rfmScore = `${r.rScore}${r.fScore}${r.mScore}`;
+    const segment = assignSegment(r.rScore, r.fScore);
+    return { ...r, rfmScore, segment } as RFMRecord;
   });
 };
 
