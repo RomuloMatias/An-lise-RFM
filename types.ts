@@ -6,7 +6,9 @@ export interface RawRow {
 export interface RFMRecord {
   customerId: string;
   customerName: string;
+  salesperson: string; // New field for Salesperson
   recency: number; // Days since last purchase
+  lastPurchaseDate: Date; // Actual date of last purchase
   frequency: number; // Count of purchases
   monetary: number; // Total value
   rScore: number;
@@ -19,6 +21,7 @@ export interface RFMRecord {
 export interface ColumnMapping {
   customerId: string;
   customerName: string;
+  salesperson: string; // New mapping field
   orderDate: string;
   orderValue: string;
 }

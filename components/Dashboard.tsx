@@ -4,25 +4,41 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend
 } from 'recharts';
+import Papa from 'papaparse';
 import { RFMRecord, SegmentSummary } from '../types';
 import { SEGMENT_COLORS, SEGMENT_DESCRIPTIONS } from '../constants';
-import { Users, DollarSign, Grid3X3, ArrowUpRight, ShoppingBag, Target, Search, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Users, DollarSign, Grid3X3, ArrowUpRight, ShoppingBag, Target, Search, Filter, ChevronLeft, ChevronRight, FileDown, Briefcase, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface DashboardProps {
   records: RFMRecord[];
   summaries: SegmentSummary[];
 }
 
+type SortKey = keyof RFMRecord;
+
+interface SortConfig {
+  key: SortKey;
+  direction: 'asc' | 'desc';
+}
+
 const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSegment, setFilterSegment] = useState('');
+  const [filterSalesperson, setFilterSalesperson] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'monetary', direction: 'desc' });
   const itemsPerPage = 10;
 
   const totalCustomers = records.length;
   const totalRevenue = records.reduce((acc, curr) => acc + curr.monetary, 0);
   const avgFrequency = records.reduce((acc, curr) => acc + curr.frequency, 0) / (totalCustomers || 1);
   const avgRecency = records.reduce((acc, curr) => acc + curr.recency, 0) / (totalCustomers || 1);
+
+  // Get unique list of salespeople for filter
+  const salespeople = useMemo(() => {
+    const list = Array.from(new Set(records.map(r => r.salesperson).filter(s => s && s !== 'N/A')));
+    return list.sort();
+  }, [records]);
 
   const matrixData = Array.from({ length: 5 }, (_, fIdx) => {
     const fScore = 5 - fIdx;
@@ -45,14 +61,45 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
   });
 
   const filteredRecords = useMemo(() => {
-    return records.filter(rec => {
+    // 1. Filter
+    const filtered = records.filter(rec => {
       const matchesSearch = 
         rec.customerId.toLowerCase().includes(searchTerm.toLowerCase()) || 
         rec.customerName.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesSegment = filterSegment === '' || rec.segment === filterSegment;
-      return matchesSearch && matchesSegment;
+      const matchesSalesperson = filterSalesperson === '' || rec.salesperson === filterSalesperson;
+      return matchesSearch && matchesSegment && matchesSalesperson;
     });
-  }, [records, searchTerm, filterSegment]);
+
+    // 2. Sort
+    return filtered.sort((a, b) => {
+      const aValue = a[sortConfig.key];
+      const bValue = b[sortConfig.key];
+
+      if (aValue === bValue) return 0;
+
+      // Handle Dates
+      if (aValue instanceof Date && bValue instanceof Date) {
+        return sortConfig.direction === 'asc' 
+          ? aValue.getTime() - bValue.getTime() 
+          : bValue.getTime() - aValue.getTime();
+      }
+
+      // Handle Strings (case insensitive)
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortConfig.direction === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
+      }
+
+      // Handle Numbers
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+
+      return 0;
+    });
+  }, [records, searchTerm, filterSegment, filterSalesperson, sortConfig]);
 
   const paginatedRecords = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -60,6 +107,44 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
   }, [filteredRecords, currentPage]);
 
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
+
+  const handleSort = (key: SortKey) => {
+    setSortConfig(current => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const handleExportCSV = () => {
+    if (filteredRecords.length === 0) {
+      alert("Não há dados para exportar com os filtros atuais.");
+      return;
+    }
+
+    const csvData = filteredRecords.map(rec => ({
+      'ID Cliente': rec.customerId,
+      'Nome': rec.customerName,
+      'Vendedor': rec.salesperson,
+      'Segmento': rec.segment,
+      'Última Compra': rec.lastPurchaseDate.toLocaleDateString('pt-BR'),
+      'Dias Recência': rec.recency,
+      'Frequência': rec.frequency,
+      'Valor Total': rec.monetary.toFixed(2),
+      'Score R': rec.rScore,
+      'Score F': rec.fScore,
+      'Score M': rec.mScore
+    }));
+
+    const csv = Papa.unparse(csvData, { delimiter: ";" });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `RFM_Export_${filterSegment || 'Todos'}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const StatCard = ({ title, value, icon: Icon, colorClass, gradientColor, trend }: any) => (
     <div className={`bg-[#161618] p-6 rounded-xl border border-slate-800/50 relative overflow-hidden group shadow-lg transition-all`}>
@@ -95,6 +180,25 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
       </div>
     );
   };
+
+  const SortIcon = ({ colKey }: { colKey: SortKey }) => {
+    if (sortConfig.key !== colKey) return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-70" />;
+    return sortConfig.direction === 'asc' 
+      ? <ArrowUp className="w-3 h-3 text-orange-500" /> 
+      : <ArrowDown className="w-3 h-3 text-orange-500" />;
+  };
+
+  const SortableHeader = ({ label, colKey, align = 'left' }: { label: string, colKey: SortKey, align?: string }) => (
+    <th 
+      className={`px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] cursor-pointer hover:bg-white/5 transition-colors group ${align === 'right' ? 'text-right' : 'text-left'}`}
+      onClick={() => handleSort(colKey)}
+    >
+      <div className={`flex items-center space-x-2 ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+        <span>{label}</span>
+        <SortIcon colKey={colKey} />
+      </div>
+    </th>
+  );
 
   return (
     <div className="space-y-8 pb-20">
@@ -226,34 +330,58 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
       {/* Detalhamento por Cliente */}
       <div className="bg-[#161618] rounded-xl border border-slate-800 shadow-xl overflow-hidden">
         <div className="p-8 border-b border-slate-800/50">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
-              <h3 className="text-xl font-bold text-white tracking-tight">Detalhamento por Cliente</h3>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Análise individualizada de comportamento</p>
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Detalhamento por Cliente</h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Análise individualizada de comportamento</p>
+              </div>
+              
+              <button 
+                onClick={handleExportCSV}
+                className="flex items-center space-x-2 bg-[#ff5c00] hover:bg-orange-600 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-lg active:scale-95 whitespace-nowrap self-start md:self-auto"
+              >
+                <FileDown className="w-4 h-4" />
+                <span className="text-sm">Exportar CSV</span>
+              </button>
             </div>
             
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative">
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input 
                   type="text"
                   placeholder="Buscar ID ou Nome..."
-                  className="bg-[#0d0d0f] border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none w-full sm:w-64 transition-all"
+                  className="bg-[#0d0d0f] border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none w-full transition-all"
                   value={searchTerm}
                   onChange={(e) => {setSearchTerm(e.target.value); setCurrentPage(1);}}
                 />
               </div>
               
-              <div className="relative">
+              <div className="relative flex-1 md:flex-none">
                 <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <select 
-                  className="bg-[#0d0d0f] border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none w-full sm:w-56 appearance-none cursor-pointer"
+                  className="bg-[#0d0d0f] border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none w-full md:w-48 appearance-none cursor-pointer"
                   value={filterSegment}
                   onChange={(e) => {setFilterSegment(e.target.value); setCurrentPage(1);}}
                 >
                   <option value="">Todos os Segmentos</option>
                   {summaries.map(s => (
                     <option key={s.name} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="relative flex-1 md:flex-none">
+                <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <select 
+                  className="bg-[#0d0d0f] border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:ring-1 focus:ring-orange-500 outline-none w-full md:w-48 appearance-none cursor-pointer"
+                  value={filterSalesperson}
+                  onChange={(e) => {setFilterSalesperson(e.target.value); setCurrentPage(1);}}
+                >
+                  <option value="">Todos os Vendedores</option>
+                  {salespeople.map(s => (
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
@@ -265,35 +393,51 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
           <table className="w-full text-left">
             <thead>
               <tr className="bg-[#0d0d0f]/30 border-b border-slate-800">
-                <th className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Cliente</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Segmento</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">Scores RFM</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-right">Faturamento Total</th>
+                <SortableHeader label="Cliente" colKey="customerName" />
+                <SortableHeader label="Vendedor" colKey="salesperson" />
+                <SortableHeader label="Segmento" colKey="segment" />
+                <SortableHeader label="Última Compra" colKey="lastPurchaseDate" />
+                <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">Scores RFM</th>
+                <SortableHeader label="Faturamento" colKey="monetary" align="right" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/40">
               {paginatedRecords.length > 0 ? paginatedRecords.map((rec) => (
                 <tr key={rec.customerId} className="hover:bg-white/5 transition-all group">
-                  <td className="px-8 py-5">
+                  <td className="px-6 py-5">
                     <div className="flex flex-col">
                       <span className="font-bold text-white text-sm line-clamp-1">{rec.customerName}</span>
                       <span className="font-mono text-[10px] text-slate-500 uppercase tracking-wider">{rec.customerId}</span>
                     </div>
                   </td>
-                  <td className="px-8 py-5">
+                  <td className="px-6 py-5">
+                     <div className="flex items-center space-x-2">
+                       <Briefcase className="w-3 h-3 text-slate-600" />
+                       <span className="text-xs text-slate-400 font-medium">{rec.salesperson !== 'N/A' ? rec.salesperson : '-'}</span>
+                     </div>
+                  </td>
+                  <td className="px-6 py-5">
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 rounded-full" style={{ backgroundColor: SEGMENT_COLORS[rec.segment] }}></div>
                       <span className="text-xs font-bold text-white">{rec.segment}</span>
                     </div>
                   </td>
-                  <td className="px-8 py-5">
+                  <td className="px-6 py-5">
+                    <span className="text-sm text-slate-300 font-medium">
+                      {rec.lastPurchaseDate.toLocaleDateString('pt-BR')}
+                    </span>
+                    <span className="block text-[10px] text-slate-600 font-bold uppercase mt-0.5">
+                      {rec.recency} dias atrás
+                    </span>
+                  </td>
+                  <td className="px-6 py-5">
                     <div className="flex items-center justify-center space-x-3">
                       <ScoreBadge score={rec.rScore} label="R" />
                       <ScoreBadge score={rec.fScore} label="F" />
                       <ScoreBadge score={rec.mScore} label="M" />
                     </div>
                   </td>
-                  <td className="px-8 py-5 text-right">
+                  <td className="px-6 py-5 text-right">
                     <div className="flex flex-col items-end">
                       <span className="font-bold text-white text-sm">R$ {rec.monetary.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       <span className="text-[8px] text-slate-500 font-black uppercase tracking-tighter">{rec.frequency} transações</span>
@@ -302,7 +446,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, summaries }) => {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={4} className="px-8 py-20 text-center">
+                  <td colSpan={6} className="px-8 py-20 text-center">
                     <div className="flex flex-col items-center opacity-30">
                       <Search className="w-12 h-12 mb-4" />
                       <p className="font-black uppercase tracking-widest text-sm">Nenhum cliente encontrado</p>

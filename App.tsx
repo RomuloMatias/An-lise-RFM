@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Sparkles, BarChart2, Database, ChevronRight, Settings, Users, 
-  Calendar, DollarSign, Download, Search, Bell, Copy, Check, User
+  Calendar, DollarSign, Download, Search, Bell, Copy, Check, User, Briefcase
 } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import Dashboard from './components/Dashboard';
@@ -15,7 +15,7 @@ import { marked } from 'marked';
 const App: React.FC = () => {
   const [data, setData] = useState<RawRow[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
-  const [mapping, setMapping] = useState<ColumnMapping>({ customerId: '', customerName: '', orderDate: '', orderValue: '' });
+  const [mapping, setMapping] = useState<ColumnMapping>({ customerId: '', customerName: '', salesperson: '', orderDate: '', orderValue: '' });
   const [rfmRecords, setRfmRecords] = useState<RFMRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [aiInsights, setAiInsights] = useState<string>('');
@@ -52,6 +52,7 @@ const App: React.FC = () => {
     setMapping({
       customerId: cols.find(c => /id|customer_id|cliente_id|codigo/i.test(c)) || '',
       customerName: cols.find(c => /name|nome|contato|razao|cliente/i.test(c)) || '',
+      salesperson: cols.find(c => /sales|vendedor|representante|consultor|gerente/i.test(c)) || '',
       orderDate: cols.find(c => /date|data|emissao/i.test(c)) || '',
       orderValue: cols.find(c => /value|valor|total|amount|bruto/i.test(c)) || ''
     });
@@ -154,6 +155,7 @@ const App: React.FC = () => {
               <div className="space-y-6">
                 <MappingSelect label="Identificador do Cliente (ID)" icon={Users} value={mapping.customerId} onChange={(v: string) => setMapping({...mapping, customerId: v})} options={headers} />
                 <MappingSelect label="Nome do Cliente (Opcional)" icon={User} value={mapping.customerName} onChange={(v: string) => setMapping({...mapping, customerName: v})} options={headers} />
+                <MappingSelect label="Vendedor / Representante (Opcional)" icon={Briefcase} value={mapping.salesperson} onChange={(v: string) => setMapping({...mapping, salesperson: v})} options={headers} />
                 <MappingSelect label="Data da Transação" icon={Calendar} value={mapping.orderDate} onChange={(v: string) => setMapping({...mapping, orderDate: v})} options={headers} />
                 <MappingSelect label="Valor da Venda" icon={DollarSign} value={mapping.orderValue} onChange={(v: string) => setMapping({...mapping, orderValue: v})} options={headers} />
               </div>

@@ -46,7 +46,7 @@ const parseDate = (val: any): Date => {
 };
 
 export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[] => {
-  const customerData: Record<string, { name: string, dates: Date[], values: number[] }> = {};
+  const customerData: Record<string, { name: string, salesperson: string, dates: Date[], values: number[] }> = {};
 
   // 1. Agrupamento Eficiente
   // Iteração única O(N) para consolidar transações em clientes
@@ -59,14 +59,28 @@ export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[
 
     const cidStr = String(cid).trim();
     const cName = mapping.customerName && row[mapping.customerName] ? String(row[mapping.customerName]) : 'Cliente ' + cidStr;
+    // Captura o vendedor se mapeado, senão usa "N/A"
+    const cSalesperson = mapping.salesperson && row[mapping.salesperson] ? String(row[mapping.salesperson]) : 'N/A';
+    
     const dateVal = row[mapping.orderDate];
     const val = parseCurrency(row[mapping.orderValue]);
     const date = parseDate(dateVal);
 
     if (!isNaN(date.getTime())) {
       if (!customerData[cidStr]) {
-        customerData[cidStr] = { name: cName, dates: [], values: [] };
+        // Inicializa com o vendedor encontrado na primeira linha deste cliente
+        // (Assumindo que o cliente pertence a um vendedor principal, ou pega o último)
+        customerData[cidStr] = { name: cName, salesperson: cSalesperson, dates: [], values: [] };
       }
+      
+      // Opcional: Atualizar vendedor para o mais recente se a linha atual for mais nova?
+      // Por performance e simplicidade, mantemos o primeiro encontrado ou atualizamos sempre.
+      // Vamos manter o último encontrado na iteração (comportamento padrão de overwrite se a tabela estiver ordenada por data, senão é aleatório).
+      // Para consistência, se o vendedor for diferente de N/A, atualizamos.
+      if (cSalesperson !== 'N/A') {
+          customerData[cidStr].salesperson = cSalesperson;
+      }
+
       customerData[cidStr].dates.push(date);
       customerData[cidStr].values.push(val);
     }
@@ -101,7 +115,9 @@ export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[
     records.push({ 
       customerId: cid, 
       customerName: data.name,
-      recency, 
+      salesperson: data.salesperson, // Passa o vendedor para o registro final
+      recency,
+      lastPurchaseDate: latestDate,
       frequency, 
       monetary,
       rScore: 0,
@@ -111,11 +127,8 @@ export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[
   });
 
   // 4. Atribuição de Scores Otimizada (O(C log C))
-  // Em vez de find() dentro de loop (O(N^2)), modificamos as referências do array ordenado diretamente
   
   const assignScores = (key: 'recency' | 'frequency' | 'monetary', inverse = false) => {
-    // Cria uma cópia superficial e ordena. Como são objetos, as referências se mantêm.
-    // Modificar o item dentro do sorted modifica o item no array 'records' original.
     const sorted = [...records].sort((a, b) => (a[key] as number) - (b[key] as number));
     const n = sorted.length;
     
@@ -123,7 +136,7 @@ export const calculateRFM = (data: RawRow[], mapping: ColumnMapping): RFMRecord[
       let score = Math.floor((i / n) * 5) + 1;
       if (inverse) score = 6 - score;
       
-      // Atribuição direta por referência - ULTRA RÁPIDO
+      // Atribuição direta por referência
       if (key === 'recency') sorted[i].rScore = score;
       if (key === 'frequency') sorted[i].fScore = score;
       if (key === 'monetary') sorted[i].mScore = score;
